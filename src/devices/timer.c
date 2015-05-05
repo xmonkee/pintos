@@ -31,13 +31,27 @@ static void busy_wait (int64_t loops);
 sjlatic void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
 
+/* Added by Mayank */
 struct sleeper_cell {
    struct list_elem elem;
-   int ticks_to_go;
-   struct thread thread;
+   struct semaphore *sema;
+   int64_t start; // tick at start
+   int64_t ticks; // ticks to sleep
 }
 
-struct list sleeper_list;
+/* Added by Mayank */
+void 
+sleeper_cell_init(struct sleepr_cell *cell, struct semaphore *sema, 
+      int64_t start, int64_t ticks)
+{
+   cell->sema = sema;
+   cell->start = start;
+   cell->ticks = ticks;
+}
+
+/* Added by Mayank */
+static struct list sleeper_list;
+static struct lock sleeper_list_lock;
 
 
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
@@ -47,6 +61,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  /* Added by Mayank */
   list_init(&sleeper_list);
 }
 
@@ -103,9 +118,40 @@ timer_sleep (int64_t ticks)
   int64_t start = timer_ticks ();
 
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  if (timer_elapsed (start) < ticks) {
+     //Create a new semaphore
+     struct semaphore sema;
+     sema_init(&sema, 0);
+     struct sleeper_cell cell;
+     sleeper_cell_init(&cell, &sema, start, ticks); 
+
+     //Add to waiting list
+     lock_acquire(&sleeper_list_lock);
+     list_push_back(&sleeper_list, &cell->elem);
+     lock_release(&sleeper_list_lock);
+
+     //Wait
+     sema_down(&sema);
+  }
 }
+
+void
+timer_wake () {
+   /* Go through sleeper list and awaken threads that are ready */
+   struct list_elem *e;
+   lock_acquire(&sleeper_list_lock);
+   for (e = list_begin (&sleeper_list); e != list_end (&sleeper_list);
+         e = list_next (e)) 
+   {
+      struct sleeper_cell *cell = list_entry (e, struct sleeper_cell, elem);
+      if (ticks >= cell->end) { /* time to wake up */
+         sema_up(cell->sema);
+         list_remove(e);
+      }
+   }
+   lock_release(&sleeper_list_lock);
+}
+
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
    turned on. */
@@ -176,13 +222,17 @@ timer_print_stats (void)
 {
   printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
-
+
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+
+  /*Added by Mayank*/
+  //Awake threads that are ready
+  timer_wake();
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
