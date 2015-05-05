@@ -113,19 +113,23 @@ timer_sleep (int64_t ticks)
 void
 wake_threads ()
 {
-   struct list_elem *e = list_begin(&sleeper_list);
+   struct list_elem *e, *next;
+
+   if (list_empty(&sleeper_list)) 
+      return;
+
+   e = list_begin(&sleeper_list);
    while ( e != list_end(&sleeper_list) ) {
+
       struct thread *t = list_entry( e, struct thread, elem);
-      if (ticks > t->wake_ticks) {
-         list_remove(e);
+      if (ticks >= t->wake_ticks && t->status == THREAD_BLOCKED) {
+         e = list_remove(e);
          thread_unblock(t);
-         e = list_begin(&sleeper_list);
-      } else {
-      e = list_next(e);
+      } else { 
+         e = list_next(e);
       }
    }
 }
-
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
    turned on. */
