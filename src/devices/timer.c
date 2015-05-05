@@ -7,6 +7,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "lib/kernel/list.h"
   
 /* See [8254] for hardware details of the 8254 timer chip. */
 
@@ -27,8 +28,17 @@ static unsigned loops_per_tick;
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
-static void real_time_sleep (int64_t num, int32_t denom);
+sjlatic void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
+
+struct sleeper_cell {
+   struct list_elem elem;
+   int ticks_to_go;
+   struct thread thread;
+}
+
+struct list sleeper_list;
+
 
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
@@ -37,6 +47,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  list_init(&sleeper_list);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
